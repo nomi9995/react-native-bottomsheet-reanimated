@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import Animated from 'react-native-reanimated';
 import Interactable from 'react-native-interactable-reanimated';
+import { PanGestureHandler } from 'react-native-gesture-handler';
 
 const Screen = {
   width: Dimensions.get('window').width,
@@ -25,13 +26,8 @@ const getSnapPoints = (snapPoints) => {
   });
 };
 
-const getInitialPosition = (snapPoint) => {
-  if (typeof snapPoint === 'string') {
-    const parentValue = snapPoint.split('%')[0];
-    snapPoint = (Screen.height / 100) * parentValue;
-  }
-  const snapObject = { y: Screen.height - snapPoint };
-  return snapObject;
+const getInitialPosition = (snapPoints, snapPoint) => {
+  return snapPoints[snapPoint];
 };
 
 class BottomPanel extends Component {
@@ -39,6 +35,7 @@ class BottomPanel extends Component {
     super(props);
     this._deltaY = new Animated.Value(Screen.height);
     this.state = {
+      showFullScreenHeader: false,
       snapToIndex: 0,
       points: 100,
       scrollValueY: new Animated.Value(0),
@@ -51,14 +48,32 @@ class BottomPanel extends Component {
   }
 
   onDrawerSnap = (snap) => {
-    const { snapPoints } = this.props;
+    const { snapPoints, onSnap, isHeaderDockable } = this.props;
     if (
       snapPoints[snap.nativeEvent.index] === 0 ||
       snapPoints[snap.nativeEvent.index] === '0%'
     ) {
-      this.setState({ isBottomSheetDismissed: true });
+      this.setState({
+        isBottomSheetDismissed: true,
+        showFullScreenHeader: false,
+      });
+    } else if (
+      snapPoints[snap.nativeEvent.index] === Screen.height ||
+      snapPoints[snap.nativeEvent.index] === '100%'
+    ) {
+      if (isHeaderDockable) {
+        this.setState({
+          showFullScreenHeader: true,
+        });
+      }
     } else {
-      this.setState({ isBottomSheetDismissed: false });
+      this.setState({
+        isBottomSheetDismissed: false,
+        showFullScreenHeader: false,
+      });
+    }
+    if (onSnap) {
+      onSnap(snap.nativeEvent, true);
     }
   };
 
@@ -68,6 +83,9 @@ class BottomPanel extends Component {
     if (index !== -1) {
       this.refs.bottomPanel.snapTo({ index });
     }
+    this.setState({
+      showFullScreenHeader: false,
+    });
   };
 
   snapTo = (index) => {
@@ -76,6 +94,22 @@ class BottomPanel extends Component {
       Keyboard.dismiss();
     }
     this.refs.bottomPanel.snapTo({ index });
+  };
+
+  _onPanGestureEvent = (event) => {
+    const { isHeaderDockable, snapPoints } = this.props;
+    const { showFullScreenHeader } = this.state;
+    if (showFullScreenHeader && isHeaderDockable) {
+      if (event.nativeEvent.translationY > 50) {
+        let snapPoint = snapPoints.filter(
+          (x) => x !== '100%' && x !== Screen.height && x !== '0%' && x !== 0
+        );
+        if (snapPoint.length > 0) {
+          let index = snapPoints.indexOf(snapPoint[0]);
+          this.snapTo(index);
+        }
+      }
+    }
   };
 
   render() {
@@ -93,20 +127,33 @@ class BottomPanel extends Component {
       tipStyle,
       headerStyle,
       bodyStyle,
+      dragEnabled,
+      isHeaderDockable,
     } = this.props;
     let { snapPoints, initialPosition = { y: 0 } } = this.props;
     snapPoints = getSnapPoints(snapPoints);
-    initialPosition = getInitialPosition(initialPosition);
-    const { isDismissWithPress, isBottomSheetDismissed } = this.state;
+    initialPosition = getInitialPosition(snapPoints, initialPosition);
+    const {
+      isDismissWithPress,
+      isBottomSheetDismissed,
+      showFullScreenHeader,
+    } = this.state;
     return (
-      <View style={styles.panelContainer} pointerEvents={'box-none'}>
-        {/* Backdrop */}
-        {isBackDrop && (
-          <Animated.View
-            pointerEvents={!isBottomSheetDismissed ? 'auto' : 'box-none'}
-            style={[
-              styles.panelContainer,
-              {
+      <PanGestureHandler onGestureEvent={this._onPanGestureEvent}>
+        <View
+          style={styles.panelContainer}
+          pointerEvents={!isBottomSheetDismissed ? 'auto' : 'box-none'}
+        >
+          {/* Backdrop */}
+          {isBackDrop && (
+            <Animated.View
+              pointerEvents={!isBottomSheetDismissed ? 'auto' : 'box-none'}
+              style={{
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
                 backgroundColor: backDropColor,
                 opacity: isAnimatedYFromParent
                   ? animatedValueY.interpolate({
@@ -119,63 +166,87 @@ class BottomPanel extends Component {
                       outputRange: [1, 0],
                       extrapolateRight: 'clamp',
                     }),
-              },
-            ]}
-          />
-        )}
-
-        <Interactable.View
-          dragEnabled={isModal ? false : true}
-          verticalOnly={true}
-          ref="bottomPanel"
-          snapPoints={snapPoints}
-          initialPosition={initialPosition}
-          boundaries={{ top: isModal ? 0 : -300, bounce: isModal ? 0 : 0.5 }}
-          animatedValueY={isAnimatedYFromParent ? animatedValueY : this._deltaY}
-          onSnap={this.onDrawerSnap}
-        >
-          {!isModal && isDismissWithPress && !isBottomSheetDismissed && (
-            <TouchableWithoutFeedback
-              onPress={this.dismissBottomSheet}
-              disabled={isBackDrop ? false : true}
-            >
-              <View
-                style={{
-                  height: Screen.height,
-                  marginTop: -Screen.height,
-                }}
-              />
-            </TouchableWithoutFeedback>
+              }}
+            />
           )}
-
-          <View
-            style={[
-              isModal ? styles.modal : styles.panel,
-              { backgroundColor: bottomSheerColor },
-              isRoundBorderWithTipHeader
-                ? {
-                    backgroundColor: '#f7f5eee8',
-                    borderTopLeftRadius: 12,
-                    borderTopRightRadius: 12,
-                    shadowColor: '#000000',
-                    shadowOffset: { width: 0, height: 0 },
-                    shadowRadius: 5,
-                    shadowOpacity: 0.4,
-                  }
-                : {},
-              containerStyle,
-            ]}
+          {!isModal && isDismissWithPress && !isBottomSheetDismissed && (
+            <Animated.View
+              pointerEvents={!isBottomSheetDismissed ? 'auto' : 'box-none'}
+              style={{
+                position: 'absolute',
+                top: 0,
+                bottom: 0,
+                left: 0,
+                right: 0,
+              }}
+            >
+              <TouchableWithoutFeedback
+                pointerEvents={!isBottomSheetDismissed ? 'auto' : 'box-none'}
+                style={{
+                  flex: 1,
+                }}
+                onPress={this.dismissBottomSheet}
+              >
+                <View
+                  style={{
+                    height: '100%',
+                    width: '100%',
+                  }}
+                />
+              </TouchableWithoutFeedback>
+            </Animated.View>
+          )}
+          <Interactable.View
+            dragEnabled={dragEnabled === true && showFullScreenHeader === false}
+            verticalOnly={true}
+            ref="bottomPanel"
+            snapPoints={snapPoints}
+            initialPosition={initialPosition}
+            boundaries={{
+              top: isModal ? 0 : -300,
+              bounce: isModal ? 0 : 0.5,
+            }}
+            animatedValueY={
+              isAnimatedYFromParent ? animatedValueY : this._deltaY
+            }
+            onSnap={this.onDrawerSnap}
           >
-            {!isModal && isRoundBorderWithTipHeader && (
-              <View style={[styles.panelHandle, tipStyle]} />
-            )}
-            {!isModal && (
-              <View style={[styles.panelHeader, headerStyle]}>{header}</View>
-            )}
-            <View style={bodyStyle}>{body}</View>
-          </View>
-        </Interactable.View>
-      </View>
+            <View
+              style={[
+                isModal ? styles.modal : styles.panel,
+                { backgroundColor: bottomSheerColor },
+                isRoundBorderWithTipHeader
+                  ? {
+                      backgroundColor: '#f7f5eee8',
+                      borderTopLeftRadius: 12,
+                      borderTopRightRadius: 12,
+                      shadowColor: '#000000',
+                      shadowOffset: { width: 0, height: 0 },
+                      shadowRadius: 5,
+                      shadowOpacity: 0.4,
+                    }
+                  : {},
+                containerStyle,
+              ]}
+            >
+              {!isModal && !showFullScreenHeader ? (
+                <>
+                  {isRoundBorderWithTipHeader ? (
+                    <View style={[styles.panelHandle, tipStyle]} />
+                  ) : null}
+                  <View style={[styles.panelHeader, headerStyle]}>
+                    {header}
+                  </View>
+                </>
+              ) : isHeaderDockable ? (
+                <View>{header}</View>
+              ) : null}
+
+              <View style={bodyStyle}>{body}</View>
+            </View>
+          </Interactable.View>
+        </View>
+      </PanGestureHandler>
     );
   }
 }
@@ -200,7 +271,8 @@ const styles = StyleSheet.create({
     height: Screen.height + 300,
   },
   panelHeader: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   panelContainer: {
     position: 'absolute',
@@ -208,6 +280,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    zIndex: 1,
   },
 });
 
